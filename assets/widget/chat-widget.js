@@ -80,7 +80,35 @@
     'width:36px;height:36px;flex:0 0 auto;cursor:pointer;display:flex;align-items:center;justify-content:center;}',
     '.lw-send:disabled{opacity:.5;cursor:default;}',
     '.lw-send svg{width:16px;height:16px;}',
-    '@media (max-width:420px){.lw-panel{right:16px;left:16px;width:auto;bottom:88px;}}'
+    '@media (max-width:420px){.lw-panel{right:16px;left:16px;width:auto;bottom:88px;}}',
+    '.lw-book{background:#fff;border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);',
+    'max-width:92%;font-size:13px;}',
+    '.lw-book-day{margin-bottom:10px;}',
+    '.lw-book-day:last-child{margin-bottom:0;}',
+    '.lw-book-day-label{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;',
+    'color:' + cfg.accent + ';margin-bottom:6px;}',
+    '.lw-book-slots{display:flex;flex-wrap:wrap;gap:6px;}',
+    '.lw-slot{border:1px solid rgba(0,0,0,.14);border-radius:8px;padding:6px 10px;font-size:12px;',
+    'background:#fff;color:' + cfg.dark + ';cursor:pointer;font-family:inherit;transition:border-color .15s ease;}',
+    '.lw-slot:hover{border-color:' + cfg.accent + ';}',
+    '.lw-slot.lw-taken{opacity:.4;text-decoration:line-through;cursor:default;background:#f4f4f4;}',
+    '.lw-slot.lw-taken:hover{border-color:rgba(0,0,0,.14);}',
+    '.lw-book-loading{font-size:12.5px;color:' + cfg.dark + ';opacity:.6;padding:2px 0;}',
+    '.lw-book-error{font-size:12px;color:#b3261e;margin-top:8px;}',
+    '.lw-book-title{font-weight:600;font-size:13px;margin-bottom:10px;color:' + cfg.dark + ';}',
+    '.lw-book-field{margin-bottom:8px;}',
+    '.lw-book-field label{display:block;font-size:10.5px;font-weight:700;letter-spacing:.04em;',
+    'text-transform:uppercase;color:' + cfg.dark + ';opacity:.55;margin-bottom:4px;}',
+    '.lw-book-field input{width:100%;border:1px solid rgba(0,0,0,.14);border-radius:8px;',
+    'padding:8px 10px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;}',
+    '.lw-book-field input:focus{border-color:' + cfg.accent + ';}',
+    '.lw-book-actions{display:flex;align-items:center;gap:12px;margin-top:10px;}',
+    '.lw-book-confirm{background:' + cfg.accent + ';color:' + cfg.cream + ';border:none;',
+    'border-radius:999px;padding:8px 16px;font-size:12.5px;font-weight:700;cursor:pointer;',
+    'font-family:inherit;}',
+    '.lw-book-confirm:disabled{opacity:.5;cursor:default;}',
+    '.lw-book-back{background:none;border:none;padding:0;font-size:12px;color:' + cfg.dark + ';',
+    'opacity:.6;text-decoration:underline;cursor:pointer;font-family:inherit;}'
   ].join('');
   document.head.appendChild(style);
 
@@ -155,6 +183,151 @@
     }
   }
 
+  /* ---------------------------------------------------- booking card ---- */
+  function addBookingCard() {
+    var row = document.createElement('div');
+    row.className = 'lw-row bot';
+    var card = document.createElement('div');
+    card.className = 'lw-book';
+    card.innerHTML = '<div class="lw-book-loading">Loading available times…</div>';
+    row.appendChild(card);
+    msgsEl.appendChild(row);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    loadAvailability(card);
+    return row;
+  }
+
+  async function loadAvailability(card) {
+    try {
+      var res = await fetch((cfg.apiBase || '') + '/api/availability?clientId=' + encodeURIComponent(cfg.clientId) + '&days=7');
+      var data = await res.json();
+      if (!res.ok || !data.ok || !Array.isArray(data.days) || data.days.length === 0) {
+        card.innerHTML = '<div class="lw-book-error">Couldn\'t load times right now — please WhatsApp us instead.</div>';
+        return;
+      }
+      renderSlots(card, data.days);
+    } catch (err) {
+      card.innerHTML = '<div class="lw-book-error">Couldn\'t load times right now — please WhatsApp us instead.</div>';
+    }
+  }
+
+  function renderSlots(card, days) {
+    card.innerHTML = '<div class="lw-book-title">Pick a free consultation time</div>';
+    days.forEach(function (day) {
+      var dayEl = document.createElement('div');
+      dayEl.className = 'lw-book-day';
+      var label = document.createElement('div');
+      label.className = 'lw-book-day-label';
+      label.textContent = day.dateLabel;
+      dayEl.appendChild(label);
+
+      var slotsEl = document.createElement('div');
+      slotsEl.className = 'lw-book-slots';
+      day.slots.forEach(function (slot) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'lw-slot' + (slot.available ? '' : ' lw-taken');
+        btn.textContent = slot.label;
+        if (!slot.available) {
+          btn.disabled = true;
+        } else {
+          btn.addEventListener('click', function () {
+            showBookingForm(card, slot, day.dateLabel);
+          });
+        }
+        slotsEl.appendChild(btn);
+      });
+      dayEl.appendChild(slotsEl);
+      card.appendChild(dayEl);
+    });
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+
+  function showBookingForm(card, slot, dateLabel) {
+    card.innerHTML =
+      '<div class="lw-book-title">' + esc(dateLabel) + ' at ' + esc(slot.label) + '</div>' +
+      '<div class="lw-book-field"><label>Name</label><input type="text" class="lw-book-name" autocomplete="name"></div>' +
+      '<div class="lw-book-field"><label>Phone</label><input type="tel" class="lw-book-phone" autocomplete="tel"></div>' +
+      '<div class="lw-book-actions">' +
+        '<button type="button" class="lw-book-confirm">Confirm booking</button>' +
+        '<button type="button" class="lw-book-back">Choose another time</button>' +
+      '</div>';
+
+    var nameInput = card.querySelector('.lw-book-name');
+    var phoneInput = card.querySelector('.lw-book-phone');
+    var confirmBtn = card.querySelector('.lw-book-confirm');
+    var backBtn = card.querySelector('.lw-book-back');
+
+    backBtn.addEventListener('click', function () {
+      card.innerHTML = '<div class="lw-book-loading">Loading available times…</div>';
+      loadAvailability(card);
+    });
+
+    confirmBtn.addEventListener('click', function () {
+      var name = nameInput.value.trim();
+      var phone = phoneInput.value.trim();
+      var existingError = card.querySelector('.lw-book-error');
+      if (existingError) existingError.remove();
+      if (!name || !phone) {
+        var err = document.createElement('div');
+        err.className = 'lw-book-error';
+        err.textContent = 'Please add your name and phone number.';
+        card.appendChild(err);
+        return;
+      }
+      submitBooking(card, slot, dateLabel, name, phone);
+    });
+
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+
+  async function submitBooking(card, slot, dateLabel, name, phone) {
+    var confirmBtn = card.querySelector('.lw-book-confirm');
+    var backBtn = card.querySelector('.lw-book-back');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Booking…';
+
+    try {
+      var res = await fetch((cfg.apiBase || '') + '/api/book', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          clientId: cfg.clientId,
+          start: slot.start,
+          end: slot.end,
+          name: name,
+          phone: phone,
+          note: 'Free consultation booked via chat widget'
+        })
+      });
+      var data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        var err = document.createElement('div');
+        err.className = 'lw-book-error';
+        err.textContent = (data && data.error) || "That time isn't available anymore — please pick another.";
+        card.appendChild(err);
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Confirm booking';
+        if (data && /no longer available|just taken/i.test(data.error || '')) {
+          backBtn.click();
+        }
+        return;
+      }
+
+      card.innerHTML = '<div class="lw-book-title">✓ Booked — ' + esc(dateLabel) + ' at ' + esc(slot.label) + '</div>' +
+        '<div style="font-size:12.5px;color:' + cfg.dark + ';opacity:.75;">We\'ll see you then. The team has your number if anything changes.</div>';
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    } catch (err) {
+      var errEl = document.createElement('div');
+      errEl.className = 'lw-book-error';
+      errEl.textContent = 'Something went wrong — please WhatsApp us instead.';
+      card.appendChild(errEl);
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Confirm booking';
+    }
+  }
+
   async function send(text) {
     text = text.trim();
     if (!text) return;
@@ -181,6 +354,9 @@
         persist();
         if (data.leadCaptured) {
           addBubble('system', "✓ Got it — we've saved your details and the team will follow up.");
+        }
+        if (data.showCalendar) {
+          addBookingCard();
         }
       }
     } catch (err) {
