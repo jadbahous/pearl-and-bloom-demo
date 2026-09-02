@@ -27,6 +27,16 @@ var slotMinutes = 30;
 // How many days ahead to offer for booking.
 var lookaheadDays = 7;
 
+// Default country code applied to any phone number that arrives without a
+// leading '+' (patients usually just type the local number in the booking
+// form). Used for WhatsApp reminders, which need a full international number.
+var defaultCountryCode = '+974';
+
+// What hour of day (in `timezone`) the reminder check runs. It looks at
+// every appointment happening the following calendar day and WhatsApps
+// each one a reminder, once.
+var reminderHour = 10;
+
 /* ── Business hours ──────────────────────────────────────────────
    0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
    Pearl & Bloom: Saturday–Thursday 9:00–19:00, Friday 14:00–19:00. ── */
@@ -196,4 +206,127 @@ function jsonOutput(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ── WhatsApp reminders ────────────────────────────────────────────
+   Sends a WhatsApp template message to every patient with an appointment
+   the following calendar day. Talks to Meta's WhatsApp Cloud API directly
+   with UrlFetchApp — this runs server-to-server from Apps Script, so
+   there's no CORS proxy involved the way availability/booking needed one
+   for browser calls.
+
+   One-time setup, after Meta has approved your reminder template:
+   1. File → Project Settings → Script Properties → add three properties:
+        WHATSAPP_TOKEN            permanent System User access token
+        WHATSAPP_PHONE_NUMBER_ID  from Meta's WhatsApp → API Setup page
+        WHATSAPP_TEMPLATE_NAME    the approved template's exact name
+      (See WHATSAPP-REMINDERS.md in this folder for how to get these.)
+   2. With setupReminderTrigger selected in the function dropdown, click
+      Run once. This installs the daily trigger; re-run it any time you
+      change `reminderHour` above. Re-authorize if Google asks — this adds
+      the trigger-management scope, same as the earlier Calendar prompt.
+   ── */
+
+function setupReminderTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'sendAppointmentReminders') {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+  ScriptApp.newTrigger('sendAppointmentReminders')
+    .timeBased()
+    .everyDays(1)
+    .atHour(reminderHour)
+    .inTimezone(timezone)
+    .create();
+}
+
+function sendAppointmentReminders() {
+  var props = PropertiesService.getScriptProperties();
+  var token = props.getProperty('WHATSAPP_TOKEN');
+  var phoneNumberId = props.getProperty('WHATSAPP_PHONE_NUMBER_ID');
+  var templateName = props.getProperty('WHATSAPP_TEMPLATE_NAME');
+  if (!token || !phoneNumberId || !templateName) {
+    notifyOwner(
+      'Reminders not sent — WhatsApp not configured',
+      'sendAppointmentReminders ran but WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, or ' +
+        'WHATSAPP_TEMPLATE_NAME is missing from Script Properties. See WHATSAPP-REMINDERS.md.'
+    );
+    return;
+  }
+
+  var cal = CalendarApp.getCalendarById(calendarId) || CalendarApp.getDefaultCalendar();
+  var windowStart = new Date();
+  windowStart.setDate(windowStart.getDate() + 1);
+  windowStart.setHours(0, 0, 0, 0);
+  var windowEnd = new Date(windowStart.getTime() + 24 * 60 * 60 * 1000);
+
+  var events = cal.getEvents(windowStart, windowEnd);
+  events.forEach(function (event) {
+    var description = event.getDescription() || '';
+    if (description.indexOf('[reminded]') !== -1) return; // already sent
+
+    var phoneMatch = description.match(/Phone:\s*(.+)/);
+    if (!phoneMatch || !phoneMatch[1].trim()) return; // nothing to text
+
+    var nameMatch = description.match(/Name:\s*(.+)/);
+    var phone = normalizePhone(phoneMatch[1].trim());
+    var name = nameMatch ? nameMatch[1].trim() : 'there';
+    var dateLabel = Utilities.formatDate(event.getStartTime(), timezone, 'EEE, MMM d');
+    var timeLabel = Utilities.formatDate(event.getStartTime(), timezone, 'h:mm a');
+
+    var sent = sendWhatsAppTemplate(token, phoneNumberId, templateName, phone, [name, dateLabel, timeLabel]);
+    if (sent) {
+      event.setDescription(description + '\n[reminded]');
+    } else {
+      notifyOwner(
+        'Reminder failed to send',
+        'Could not WhatsApp-remind ' + name + ' (' + phone + ') about ' + dateLabel + ' at ' + timeLabel + '.'
+      );
+    }
+  });
+}
+
+// Turns whatever a patient typed into the phone field into a WhatsApp-ready
+// international number. Assumes Qatar (defaultCountryCode) when no country
+// code was given, since that's this pilot's market.
+function normalizePhone(phone) {
+  var cleaned = phone.replace(/[\s\-()]/g, '');
+  if (cleaned.indexOf('00') === 0) cleaned = '+' + cleaned.slice(2);
+  if (cleaned.indexOf('+') !== 0) cleaned = defaultCountryCode + cleaned;
+  return cleaned;
+}
+
+function sendWhatsAppTemplate(token, phoneNumberId, templateName, toPhone, params) {
+  var url = 'https://graph.facebook.com/v21.0/' + phoneNumberId + '/messages';
+  var payload = {
+    messaging_product: 'whatsapp',
+    to: toPhone.replace('+', ''),
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: 'en_US' },
+      components: [{
+        type: 'body',
+        parameters: params.map(function (p) { return { type: 'text', text: p }; })
+      }]
+    }
+  };
+
+  try {
+    var res = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    if (code >= 200 && code < 300) return true;
+    Logger.log('WhatsApp send failed: ' + code + ' ' + res.getContentText());
+    return false;
+  } catch (err) {
+    Logger.log('WhatsApp send error: ' + err);
+    return false;
+  }
 }
