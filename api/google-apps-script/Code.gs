@@ -37,6 +37,17 @@ var defaultCountryCode = '+974';
 // each one a reminder, once.
 var reminderHour = 10;
 
+// What hour of day (in `timezone`) the review-request check runs. It looks
+// at every appointment that happened the previous calendar day and WhatsApps
+// each patient a one-time request to leave a Google review.
+var reviewHour = 18;
+
+// Your Google Business Profile's short review link (Google Business Profile
+// → "Ask for reviews" → copy link). Replace this placeholder before turning
+// on review requests — sending patients a broken link is worse than not
+// asking at all.
+var googleReviewLink = 'https://g.page/r/REPLACE_WITH_YOUR_REVIEW_LINK/review';
+
 /* ── Business hours ──────────────────────────────────────────────
    0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
    Pearl & Bloom: Saturday–Thursday 9:00–19:00, Friday 14:00–19:00. ── */
@@ -208,28 +219,35 @@ function jsonOutput(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-/* ── WhatsApp reminders ────────────────────────────────────────────
-   Sends a WhatsApp template message to every patient with an appointment
-   the following calendar day. Talks to Meta's WhatsApp Cloud API directly
-   with UrlFetchApp — this runs server-to-server from Apps Script, so
-   there's no CORS proxy involved the way availability/booking needed one
-   for browser calls.
+/* ── WhatsApp automation (reminders + review requests) ───────────────
+   Two daily jobs, both talking to Meta's WhatsApp Cloud API directly with
+   UrlFetchApp — server-to-server from Apps Script, so there's no CORS
+   proxy involved the way availability/booking needed one for browser calls:
+     • sendAppointmentReminders — the day before a visit, remind the patient.
+     • sendReviewRequests       — the day after a visit, ask for a review.
+   They share one set of credentials but need two separate approved
+   templates, since each WhatsApp template is single-purpose.
 
-   One-time setup, after Meta has approved your reminder template:
-   1. File → Project Settings → Script Properties → add three properties:
-        WHATSAPP_TOKEN            permanent System User access token
-        WHATSAPP_PHONE_NUMBER_ID  from Meta's WhatsApp → API Setup page
-        WHATSAPP_TEMPLATE_NAME    the approved template's exact name
+   One-time setup, after Meta has approved both templates:
+   1. File → Project Settings → Script Properties → add four properties:
+        WHATSAPP_TOKEN               permanent System User access token
+        WHATSAPP_PHONE_NUMBER_ID     from Meta's WhatsApp → API Setup page
+        WHATSAPP_TEMPLATE_NAME       the approved reminder template's name
+        WHATSAPP_REVIEW_TEMPLATE_NAME the approved review-request template's name
       (See WHATSAPP-REMINDERS.md in this folder for how to get these.)
-   2. With setupReminderTrigger selected in the function dropdown, click
-      Run once. This installs the daily trigger; re-run it any time you
-      change `reminderHour` above. Re-authorize if Google asks — this adds
-      the trigger-management scope, same as the earlier Calendar prompt.
+   2. Set `googleReviewLink` above to your real Google Business Profile
+      review link.
+   3. With setupWhatsAppTriggers selected in the function dropdown, click
+      Run once. This installs both daily triggers; re-run it any time you
+      change `reminderHour` or `reviewHour` above. Re-authorize if Google
+      asks — this adds the trigger-management scope, same as the earlier
+      Calendar prompt.
    ── */
 
-function setupReminderTrigger() {
+function setupWhatsAppTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'sendAppointmentReminders') {
+    var fn = t.getHandlerFunction();
+    if (fn === 'sendAppointmentReminders' || fn === 'sendReviewRequests') {
       ScriptApp.deleteTrigger(t);
     }
   });
@@ -237,6 +255,12 @@ function setupReminderTrigger() {
     .timeBased()
     .everyDays(1)
     .atHour(reminderHour)
+    .inTimezone(timezone)
+    .create();
+  ScriptApp.newTrigger('sendReviewRequests')
+    .timeBased()
+    .everyDays(1)
+    .atHour(reviewHour)
     .inTimezone(timezone)
     .create();
 }
@@ -282,6 +306,50 @@ function sendAppointmentReminders() {
       notifyOwner(
         'Reminder failed to send',
         'Could not WhatsApp-remind ' + name + ' (' + phone + ') about ' + dateLabel + ' at ' + timeLabel + '.'
+      );
+    }
+  });
+}
+
+function sendReviewRequests() {
+  var props = PropertiesService.getScriptProperties();
+  var token = props.getProperty('WHATSAPP_TOKEN');
+  var phoneNumberId = props.getProperty('WHATSAPP_PHONE_NUMBER_ID');
+  var templateName = props.getProperty('WHATSAPP_REVIEW_TEMPLATE_NAME');
+  if (!token || !phoneNumberId || !templateName) {
+    notifyOwner(
+      'Review requests not sent — WhatsApp not configured',
+      'sendReviewRequests ran but WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, or ' +
+        'WHATSAPP_REVIEW_TEMPLATE_NAME is missing from Script Properties. See WHATSAPP-REMINDERS.md.'
+    );
+    return;
+  }
+
+  var cal = CalendarApp.getCalendarById(calendarId) || CalendarApp.getDefaultCalendar();
+  var windowStart = new Date();
+  windowStart.setDate(windowStart.getDate() - 1);
+  windowStart.setHours(0, 0, 0, 0);
+  var windowEnd = new Date(windowStart.getTime() + 24 * 60 * 60 * 1000);
+
+  var events = cal.getEvents(windowStart, windowEnd);
+  events.forEach(function (event) {
+    var description = event.getDescription() || '';
+    if (description.indexOf('[reviewed]') !== -1) return; // already sent
+
+    var phoneMatch = description.match(/Phone:\s*(.+)/);
+    if (!phoneMatch || !phoneMatch[1].trim()) return; // nothing to text
+
+    var nameMatch = description.match(/Name:\s*(.+)/);
+    var phone = normalizePhone(phoneMatch[1].trim());
+    var name = nameMatch ? nameMatch[1].trim() : 'there';
+
+    var sent = sendWhatsAppTemplate(token, phoneNumberId, templateName, phone, [name, googleReviewLink]);
+    if (sent) {
+      event.setDescription(description + '\n[reviewed]');
+    } else {
+      notifyOwner(
+        'Review request failed to send',
+        'Could not WhatsApp a review request to ' + name + ' (' + phone + ').'
       );
     }
   });
