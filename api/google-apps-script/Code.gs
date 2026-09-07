@@ -3,10 +3,11 @@
  * Paste this whole file into Extensions > Apps Script on a Google Sheet,
  * then deploy as a Web App (see README.md in this folder for the steps).
  *
- * Handles three things:
+ * Handles four things:
  *   1. Saving leads to the "Leads" sheet + emailing the owner (doPost, default).
  *   2. Reporting free/busy appointment slots from Google Calendar (doGet ?action=availability).
  *   3. Booking a slot as a real Calendar event, then logging it as a lead too (doPost action:"book").
+ *   4. Reporting lead/booking stats for the analytics dashboard (doGet ?action=stats).
  */
 
 // Change this to whichever inbox should receive lead + booking notifications.
@@ -60,6 +61,9 @@ function doGet(e) {
   var action = e && e.parameter && e.parameter.action;
   if (action === 'availability') {
     return handleAvailability(e);
+  }
+  if (action === 'stats') {
+    return handleStats(e);
   }
   return ContentService.createTextOutput('Lead widget endpoint is live.');
 }
@@ -165,6 +169,160 @@ function handleBook(data) {
   );
 
   return jsonOutput({ ok: true });
+}
+
+/* ── Stats (for the analytics dashboard) ─────────────────────────
+   Requires a `key` query param matching DASHBOARD_KEY in Script
+   Properties, so lead/patient data isn't reachable by anyone who
+   guesses the URL. Set DASHBOARD_KEY once in File → Project Settings
+   → Script Properties, then use that same passphrase on the dashboard
+   page (see dashboard.html on the site). ── */
+function handleStats(e) {
+  var key = e && e.parameter && e.parameter.key;
+  var expected = PropertiesService.getScriptProperties().getProperty('DASHBOARD_KEY');
+  if (!expected || key !== expected) {
+    return jsonOutput({ ok: false, error: 'Not authorized' });
+  }
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Leads');
+  if (!sheet || sheet.getLastRow() < 2) {
+    return jsonOutput({ ok: true, totalLeads: 0, totalBookings: 0, bySource: {}, byDay: [] });
+  }
+
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
+  var bySource = {};
+  var byDayMap = {};
+  var totalBookings = 0;
+  var lookbackDays = 14;
+  var now = new Date();
+
+  // Pre-seed the last two weeks with zero so the chart has no gaps.
+  for (var d = lookbackDays - 1; d >= 0; d--) {
+    var day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - d);
+    byDayMap[Utilities.formatDate(day, timezone, 'yyyy-MM-dd')] = 0;
+  }
+
+  rows.forEach(function (row) {
+    var source = row[5] || 'unknown';
+    bySource[source] = (bySource[source] || 0) + 1;
+    if (source === 'booking') totalBookings++;
+
+    var rowDate = new Date(row[0]);
+    if (!isNaN(rowDate.getTime())) {
+      var dayKey = Utilities.formatDate(rowDate, timezone, 'yyyy-MM-dd');
+      if (byDayMap.hasOwnProperty(dayKey)) byDayMap[dayKey]++;
+    }
+  });
+
+  var byDay = Object.keys(byDayMap).sort().map(function (k) {
+    return { date: k, count: byDayMap[k] };
+  });
+
+  return jsonOutput({
+    ok: true,
+    totalLeads: rows.length,
+    totalBookings: totalBookings,
+    bySource: bySource,
+    byDay: byDay
+  });
+}
+
+/* ── Sheet dashboard tab (native charts, for quick reference) ─────
+   Refreshes a "Dashboard" tab in this spreadsheet with lead/booking
+   totals and two native Sheets charts — no website involved, just
+   something to glance at whenever you open the sheet. Run buildDashboard
+   once manually, or run setupDashboardTrigger once to refresh it
+   automatically every morning. ── */
+function buildDashboard() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var leads = ss.getSheetByName('Leads');
+  if (!leads || leads.getLastRow() < 2) return;
+
+  var dash = ss.getSheetByName('Dashboard');
+  if (!dash) {
+    dash = ss.insertSheet('Dashboard');
+  } else {
+    dash.getCharts().forEach(function (c) { dash.removeChart(c); });
+    dash.clear();
+  }
+
+  var rows = leads.getRange(2, 1, leads.getLastRow() - 1, 6).getValues();
+  var bySource = {};
+  var byDayMap = {};
+  var lookbackDays = 14;
+  var now = new Date();
+  for (var d = lookbackDays - 1; d >= 0; d--) {
+    var day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - d);
+    byDayMap[Utilities.formatDate(day, timezone, 'MMM d')] = 0;
+  }
+  rows.forEach(function (row) {
+    var source = row[5] || 'unknown';
+    bySource[source] = (bySource[source] || 0) + 1;
+    var rowDate = new Date(row[0]);
+    if (!isNaN(rowDate.getTime())) {
+      var label = Utilities.formatDate(rowDate, timezone, 'MMM d');
+      if (byDayMap.hasOwnProperty(label)) byDayMap[label]++;
+    }
+  });
+
+  dash.getRange('A1').setValue('Pearl & Bloom — Lead Dashboard').setFontWeight('bold').setFontSize(14);
+  dash.getRange('A2').setValue('Updated: ' + Utilities.formatDate(now, timezone, 'EEE, MMM d, h:mm a'));
+
+  dash.getRange('A4').setValue('Total leads');
+  dash.getRange('B4').setValue(rows.length);
+  dash.getRange('A5').setValue('Total bookings');
+  dash.getRange('B5').setValue(bySource['booking'] || 0);
+
+  dash.getRange('A7').setValue('Source').setFontWeight('bold');
+  dash.getRange('B7').setValue('Count').setFontWeight('bold');
+  var sourceRow = 8;
+  Object.keys(bySource).forEach(function (src) {
+    dash.getRange(sourceRow, 1).setValue(src);
+    dash.getRange(sourceRow, 2).setValue(bySource[src]);
+    sourceRow++;
+  });
+
+  var dayStartRow = sourceRow + 2;
+  dash.getRange(dayStartRow, 1).setValue('Day').setFontWeight('bold');
+  dash.getRange(dayStartRow, 2).setValue('Leads').setFontWeight('bold');
+  var r = dayStartRow + 1;
+  Object.keys(byDayMap).forEach(function (label) {
+    dash.getRange(r, 1).setValue(label);
+    dash.getRange(r, 2).setValue(byDayMap[label]);
+    r++;
+  });
+
+  if (sourceRow > 8) {
+    var sourceChart = dash.newChart()
+      .setChartType(Charts.ChartType.PIE)
+      .addRange(dash.getRange(7, 1, sourceRow - 7, 2))
+      .setPosition(4, 4, 0, 0)
+      .setOption('title', 'Leads by source')
+      .build();
+    dash.insertChart(sourceChart);
+  }
+
+  var trendChart = dash.newChart()
+    .setChartType(Charts.ChartType.COLUMN)
+    .addRange(dash.getRange(dayStartRow, 1, r - dayStartRow, 2))
+    .setPosition(20, 4, 0, 0)
+    .setOption('title', 'Leads per day (last 14 days)')
+    .build();
+  dash.insertChart(trendChart);
+}
+
+function setupDashboardTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'buildDashboard') {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+  ScriptApp.newTrigger('buildDashboard')
+    .timeBased()
+    .everyDays(1)
+    .atHour(7)
+    .inTimezone(timezone)
+    .create();
 }
 
 /* ── Leads (plain, non-booking) ──────────────────────────────────
