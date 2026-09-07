@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Dashboard — Pearl & Bloom Dental Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --accent: #4F7C6C;
+    --dark: #16231F;
+    --cream: #F3F5F2;
+    --sand: #E4EDE7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Manrope', sans-serif;
+    background: var(--cream);
+    color: var(--dark);
+    min-height: 100vh;
+  }
+  .wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 32px;
+  }
+  .brand__mark {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: var(--dark);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .brand__mark svg { width: 16px; height: 16px; }
+  .brand__name {
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: -0.01em;
+  }
+  .brand__tag {
+    color: #6b7a74;
+    font-size: 0.85rem;
+    margin-left: 4px;
+  }
+
+  /* ── Gate ── */
+  #gate {
+    max-width: 380px;
+    margin: 15vh auto 0;
+    background: #fff;
+    border: 1px solid var(--sand);
+    border-radius: 16px;
+    padding: 32px;
+    text-align: center;
+  }
+  #gate h1 { font-size: 1.15rem; margin: 0 0 6px; }
+  #gate p { color: #6b7a74; font-size: 0.9rem; margin: 0 0 20px; }
+  #gate input {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--sand);
+    font-family: inherit;
+    font-size: 0.95rem;
+    margin-bottom: 12px;
+  }
+  #gate button, .refresh-btn {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  #gate button:hover, .refresh-btn:hover { opacity: 0.9; }
+  #gateError {
+    color: #b5453b;
+    font-size: 0.85rem;
+    margin-top: 10px;
+    display: none;
+  }
+
+  /* ── Dashboard ── */
+  #dashboard { display: none; }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid var(--sand);
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .card__label {
+    font-size: 0.8rem;
+    color: #6b7a74;
+    margin-bottom: 6px;
+  }
+  .card__value {
+    font-size: 1.9rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .panels {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 720px) {
+    .panels { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: #fff;
+    border: 1px solid var(--sand);
+    border-radius: 14px;
+    padding: 20px 20px 8px;
+  }
+  .panel h2 {
+    font-size: 0.95rem;
+    margin: 0 0 14px;
+  }
+  .panel canvas { max-height: 260px; }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .topbar .refresh-btn { width: auto; padding: 9px 16px; font-size: 0.85rem; }
+  .updated {
+    font-size: 0.78rem;
+    color: #6b7a74;
+    margin-top: 10px;
+  }
+  .empty-note {
+    font-size: 0.85rem;
+    color: #6b7a74;
+    text-align: center;
+    padding: 30px 0;
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="brand">
+    <div class="brand__mark">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="12" cy="12" r="2" stroke="#F3F5F2" stroke-width="1.5"/>
+        <path d="M12 2c-1.5 3-1.5 6 0 8M12 22c-1.5-3-1.5-6 0-8M2 12c3-1.5 6-1.5 8 0M22 12c-3-1.5-6-1.5-8 0" stroke="#F3F5F2" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <span class="brand__name">Pearl &amp; Bloom</span>
+    <span class="brand__tag">— Lead &amp; booking dashboard</span>
+  </div>
+
+  <div id="gate">
+    <h1>Enter passphrase</h1>
+    <p>This page shows patient contact info, so it's locked behind the passphrase set in Apps Script.</p>
+    <input type="password" id="keyInput" placeholder="Passphrase" autocomplete="off" />
+    <button id="unlockBtn">Unlock</button>
+    <div id="gateError">Wrong passphrase, or the dashboard isn't set up yet.</div>
+  </div>
+
+  <div id="dashboard">
+    <div class="topbar">
+      <div class="updated" id="updated"></div>
+      <button class="refresh-btn" id="refreshBtn">Refresh</button>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card__label">Total leads</div>
+        <div class="card__value" id="totalLeads">—</div>
+      </div>
+      <div class="card">
+        <div class="card__label">Total bookings</div>
+        <div class="card__value" id="totalBookings">—</div>
+      </div>
+      <div class="card">
+        <div class="card__label">Leads (last 14 days)</div>
+        <div class="card__value" id="recentLeads">—</div>
+      </div>
+    </div>
+
+    <div class="panels">
+      <div class="panel">
+        <h2>Leads per day (last 14 days)</h2>
+        <canvas id="trendChart"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Leads by source</h2>
+        <canvas id="sourceChart"></canvas>
+        <div id="sourceEmpty" class="empty-note" style="display:none;">No leads yet.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var STATS_URL = '/api/stats';
+  var STORAGE_KEY = 'pnb_dashboard_key';
+
+  var gate = document.getElementById('gate');
+  var dashboard = document.getElementById('dashboard');
+  var gateError = document.getElementById('gateError');
+  var keyInput = document.getElementById('keyInput');
+  var unlockBtn = document.getElementById('unlockBtn');
+  var refreshBtn = document.getElementById('refreshBtn');
+
+  var trendChart = null;
+  var sourceChart = null;
+
+  function fmtDay(iso) {
+    var d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  function render(data) {
+    document.getElementById('totalLeads').textContent = data.totalLeads;
+    document.getElementById('totalBookings').textContent = data.totalBookings;
+
+    var recent = (data.byDay || []).reduce(function (sum, d) { return sum + d.count; }, 0);
+    document.getElementById('recentLeads').textContent = recent;
+
+    document.getElementById('updated').textContent =
+      'Updated ' + new Date().toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' });
+
+    var labels = (data.byDay || []).map(function (d) { return fmtDay(d.date); });
+    var counts = (data.byDay || []).map(function (d) { return d.count; });
+
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(document.getElementById('trendChart'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: counts,
+          backgroundColor: '#4F7C6C',
+          borderRadius: 4,
+          maxBarThickness: 28
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#E4EDE7' } },
+          x: { grid: { display: false } }
+        }
+      }
+    });
+
+    var sources = data.bySource || {};
+    var sourceKeys = Object.keys(sources);
+    var sourceEmpty = document.getElementById('sourceEmpty');
+    var sourceCanvas = document.getElementById('sourceChart');
+
+    if (sourceKeys.length === 0) {
+      if (sourceChart) { sourceChart.destroy(); sourceChart = null; }
+      sourceCanvas.style.display = 'none';
+      sourceEmpty.style.display = 'block';
+    } else {
+      sourceCanvas.style.display = 'block';
+      sourceEmpty.style.display = 'none';
+      if (sourceChart) sourceChart.destroy();
+      sourceChart = new Chart(sourceCanvas, {
+        type: 'doughnut',
+        data: {
+          labels: sourceKeys,
+          datasets: [{
+            data: sourceKeys.map(function (k) { return sources[k]; }),
+            backgroundColor: ['#4F7C6C', '#8FAE9E', '#16231F', '#C9A876', '#B5453B'],
+            borderWidth: 0
+          }]
+        },
+        options: {
+          plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
+        }
+      });
+    }
+  }
+
+  function load(key, opts) {
+    opts = opts || {};
+    return fetch(STATS_URL + '?key=' + encodeURIComponent(key))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || data.ok !== true) {
+          if (opts.fromGate) {
+            sessionStorage.removeItem(STORAGE_KEY);
+            gateError.style.display = 'block';
+          }
+          return false;
+        }
+        sessionStorage.setItem(STORAGE_KEY, key);
+        gate.style.display = 'none';
+        dashboard.style.display = 'block';
+        render(data);
+        return true;
+      })
+      .catch(function () {
+        if (opts.fromGate) gateError.style.display = 'block';
+        return false;
+      });
+  }
+
+  unlockBtn.addEventListener('click', function () {
+    gateError.style.display = 'none';
+    var key = keyInput.value.trim();
+    if (!key) return;
+    load(key, { fromGate: true });
+  });
+
+  keyInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') unlockBtn.click();
+  });
+
+  refreshBtn.addEventListener('click', function () {
+    var key = sessionStorage.getItem(STORAGE_KEY);
+    if (key) load(key);
+  });
+
+  var savedKey = sessionStorage.getItem(STORAGE_KEY);
+  if (savedKey) {
+    load(savedKey, { fromGate: true });
+  }
+})();
+</script>
+
+</body>
+</html>
