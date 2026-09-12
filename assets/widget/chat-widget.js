@@ -108,7 +108,10 @@
     'font-family:inherit;}',
     '.lw-book-confirm:disabled{opacity:.5;cursor:default;}',
     '.lw-book-back{background:none;border:none;padding:0;font-size:12px;color:' + cfg.dark + ';',
-    'opacity:.6;text-decoration:underline;cursor:pointer;font-family:inherit;}'
+    'opacity:.6;text-decoration:underline;cursor:pointer;font-family:inherit;}',
+    '.lw-book-retry{background:' + cfg.accent + ';color:' + cfg.cream + ';border:none;',
+    'border-radius:999px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;}',
+    '.lw-book-wa{font-size:12px;color:' + cfg.dark + ';opacity:.7;text-decoration:underline;}'
   ].join('');
   document.head.appendChild(style);
 
@@ -197,17 +200,40 @@
     return row;
   }
 
+  function showAvailabilityError(card) {
+    card.innerHTML =
+      '<div class="lw-book-error">Couldn\'t load times right now.</div>' +
+      '<div class="lw-book-actions">' +
+      '<button type="button" class="lw-book-retry">Try again</button>' +
+      (cfg.whatsapp ? '<a class="lw-book-wa" href="https://wa.me/' + cfg.whatsapp + '" target="_blank" rel="noopener">WhatsApp us</a>' : '') +
+      '</div>';
+    var retry = card.querySelector('.lw-book-retry');
+    if (retry) {
+      retry.addEventListener('click', function () {
+        card.innerHTML = '<div class="lw-book-loading">Loading available times…</div>';
+        loadAvailability(card);
+      });
+    }
+  }
+
   async function loadAvailability(card) {
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = controller ? setTimeout(function () { controller.abort(); }, 28000) : null;
     try {
-      var res = await fetch((cfg.apiBase || '') + '/api/availability?clientId=' + encodeURIComponent(cfg.clientId) + '&days=7');
+      var res = await fetch(
+        (cfg.apiBase || '') + '/api/availability?clientId=' + encodeURIComponent(cfg.clientId) + '&days=7',
+        controller ? { signal: controller.signal } : undefined
+      );
       var data = await res.json();
       if (!res.ok || !data.ok || !Array.isArray(data.days) || data.days.length === 0) {
-        card.innerHTML = '<div class="lw-book-error">Couldn\'t load times right now — please WhatsApp us instead.</div>';
+        showAvailabilityError(card);
         return;
       }
       renderSlots(card, data.days);
     } catch (err) {
-      card.innerHTML = '<div class="lw-book-error">Couldn\'t load times right now — please WhatsApp us instead.</div>';
+      showAvailabilityError(card);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
